@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+    "iisSettings": {
+      "windowsAuthentication": false,
+      "anonymousAuthentication": true,
+      "iisExpress": {
+        "applicationUrl": "http://localhost:54480",
+        "sslPort": 44307
+      }
+    },
+    "profiles": {
+      "http": {
+        "commandName": "Project",
+        "dotnetRunMessages": true,
+        "launchBrowser": true,
+        "applicationUrl": "http://localhost:5055",
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development"
+        }
+      },
+      "https": {
+        "commandName": "Project",
+        "dotnetRunMessages": true,
+        "launchBrowser": true,
+        "applicationUrl": "https://localhost:7011;http://localhost:5055",
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development",
+          "DATABASE_CONNECTION_STRING": "Server=tcp:chatstorageserver.database.windows.net,1433;Initial Catalog=ChatStorage;Persist Security Info=False;User ID=user;Password=Admin123;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;",
+          "SIGNALR_CONNECTION_STRING": "Endpoint=https://messageservice.service.signalr.net;AccessKey=LkWpEO/+OjFd+vjii5k+Cs0r7N+4LGEiIKVs5NsDUuM=;Version=1.0;",
+          "AI_ENDPOINT": "https://azureaiservicesreenbitnetcamp.cognitiveservices.azure.com/",
+          "AI_API_KEY": "508057bfced944548c256adb53597053"
+        }
+      },
+      "IIS Express": {
+        "commandName": "IISExpress",
+        "launchBrowser": true,
+        "environmentVariables": {
+          "ASPNETCORE_ENVIRONMENT": "Development"
+        }
+      }
+    }
+  }

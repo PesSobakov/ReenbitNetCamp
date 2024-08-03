@@ -1,0 +1,246 @@
+﻿@page "/"
+@using Microsoft.AspNetCore.SignalR.Client
+@using Azure.AI.TextAnalytics
+@inject NavigationManager navigationManager
+@inject ChatContext chatContext
+@rendermode InteractiveServer
+
+<PageTitle>Home</PageTitle>
+
+@*Login page*@
+@if (!_isChatting)
+{
+    <div class="container-fluid">
+        <div class="row justify-content-center">
+            <div class="col-6 row justify-content-center pt-5">
+                <label for="username" class="form-label my-1">
+                    Enter your name to start chatting:
+                </label>
+                <InputText maxlength="32" class="form-control my-1" @bind-Value="@_username" id="username"></InputText>
+                <Button Color="ButtonColor.Secondary" @onclick="@Chat" class="my-1">  Chat! </Button>
+                @if (_errorMessage != null)
+                {
+                    <div class="my-1">@_errorMessage</div>
+                }
+            </div>
+        </div>
+    </div>
+}
+@*Chat page*@
+else
+{
+    <div class="vh-100 d-flex flex-column">
+        @*Username and disconnect*@
+        <Alert Color="AlertColor.Secondary">
+            <span class="oi oi-person mr-2" aria-hidden="true"></span>
+            <span>You are connected as <b>@_username</b></span>
+            <Button Color="ButtonColor.Warning" Size="Size.Small" Style="ml-md-auto" @onclick="@DisconnectAsync">Disconnect</Button>
+        </Alert>
+        @*Messages and users*@
+        <div class="container-fluid flex-fill" style="min-height: 0px">
+            <div class="row h-100">
+                @*Messages*@
+                <div class="col col-8 h-100">
+                    <div class="container-fluid overflow-auto d-flex flex-column-reverse h-100">
+                        <div>
+                            @foreach (var item in _messages)
+                            {
+                                @if (item.IsNotice)
+                                {
+                                    <div class="row justify-content-center">
+                                        <div class="align-self-center col-10">
+                                            <Alert Color="AlertColor.Secondary"> @item.DateTime @item.Body </Alert>
+                                        </div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="@((item.Mine?"justify-content-end":"justify-content-start")+" row")">
+                                        <div class="col-10 mb-3">
+                                            <Card>
+                                                <CardHeader Color="@item.Color">
+                                                    <div>@item.DateTime</div>
+                                                    <div>Sentiment: @item.Sentiment</div>
+                                                    <div>From: @item.Username</div>
+                                                    @if (!string.IsNullOrWhiteSpace(item.RecieverUsername))
+                                                    {
+                                                        <div>To: @item.RecieverUsername</div>
+                                                    }
+                                                </CardHeader>
+                                                <CardBody>
+                                                    <CardText>@item.Body</CardText>
+                                                </CardBody>
+                                            </Card>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+                @*Users*@
+                <div class="col-4  overflow-auto">
+                    <div>Connected users:</div>
+                    <ul>
+                        @foreach (var user in _connectedUsers)
+                        {
+                            <li>@user</li>
+                        }
+                    </ul>
+                </div>
+            </div>
+        </div>
+        <hr />
+        @*New message field*@
+        <div class="container-fluid">
+            <div id="sentto">
+                <label for="recipientUsername" class="form-label">Send message to:</label>
+                <input type="text" id="recipientUsername" placeholder="leave blank for broadcast" @bind="_recipientUsername" />
+            </div>
+
+            <div class="row flex-nowrap my-3">
+                <div class="flex-shrink-1">
+                    <InputTextArea @bind-Value="@_newMessage" class="form-control" placeholder="enter your message"></InputTextArea>
+                </div>
+                <div class="col-2">
+                    <Button Color="ButtonColor.Secondary" @onclick="@(() => SendAsync(_newMessage))" class="my-1">  Send! </Button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _isChatting = false;
+    private string _username = "";
+    private string? _errorMessage;
+    private string _recipientUsername = "";
+    private string _newMessage = "";
+    private List<Message> _messages = new List<Message>();
+    private List<string> _connectedUsers = new List<string>();
+    private string _hubUrl = "";
+    private HubConnection? _hubConnection;
+
+
+
+    public async Task Chat()
+    {
+        if (string.IsNullOrWhiteSpace(_username))
+        {
+            _errorMessage = "Please enter a name";
+            return;
+        };
+
+        try
+        {
+            _isChatting = true;
+            _errorMessage = null;
+            await Task.Delay(1);
+
+            //Load old messages
+            _messages.Clear();
+            chatContext.Database.EnsureCreated();
+            var bdMessages = chatContext.Messages.Where(x => (x.Reciever == _username || x.Reciever == "" || x.User == _username));
+            _messages.AddRange(bdMessages.Select(x => new Message(x.User, x.Text, x.User == _username, x.Sentiment, x.SendTime)));
+
+            //Connect to hub
+            string baseUrl = navigationManager.BaseUri;
+            _hubUrl = baseUrl.TrimEnd('/') + ChatHub.HubUrl;
+            _hubConnection = new HubConnectionBuilder()
+                       .WithUrl($"{_hubUrl}?username={_username}")
+                       .Build();
+
+            //Subscribe to events
+            _hubConnection.On<IEnumerable<string>>("UpdateConnectedUsers", (userList) =>
+            {
+                _connectedUsers = userList.ToList();
+                InvokeAsync(StateHasChanged);
+            });
+            _hubConnection.On<string, string, TextSentiment, DateTimeOffset>("Broadcast", BroadcastMessage);
+            _hubConnection.On<string, string, string, TextSentiment, DateTimeOffset>("SendToUser", SendToUser);
+
+            await _hubConnection.StartAsync();
+        }
+        catch (Exception e)
+        {
+            _errorMessage = $"ERROR: Failed to start chat client: {e.Message}";
+            _isChatting = false;
+        }
+    }
+
+    private void BroadcastMessage(string name, string message, TextSentiment sentiment, DateTimeOffset time)
+    {
+        bool isMine = name.Equals(_username, StringComparison.OrdinalIgnoreCase);
+        _messages.Add(new Message(name, message, isMine, sentiment, time));
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void SendToUser(string senderUsername, string recieverUsername, string message, TextSentiment sentiment, DateTimeOffset time)
+    {
+        bool isMine = senderUsername.Equals(_username, StringComparison.OrdinalIgnoreCase);
+        var messageObj = new Message(senderUsername, message, isMine, sentiment, time);
+        messageObj.RecieverUsername = recieverUsername;
+        _messages.Add(messageObj);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task DisconnectAsync()
+    {
+        if (_isChatting && _hubConnection != null)
+        {
+            await _hubConnection.StopAsync();
+            await _hubConnection.DisposeAsync();
+
+            _hubConnection = null;
+            _isChatting = false;
+        }
+    }
+
+    private async Task SendAsync(string message)
+    {
+        if (_isChatting && !string.IsNullOrWhiteSpace(message) && _hubConnection != null)
+        {
+            await _hubConnection.SendAsync("Broadcast", _username, _recipientUsername, message);
+            _newMessage = string.Empty;
+        }
+    }
+
+    private class Message
+    {
+        //(GMT+02:00) Helsinki, Kyiv, Riga, Sofia, Tallinn, Vilnius
+        readonly TimeZoneInfo zone = TimeZoneInfo.FindSystemTimeZoneById("FLE Standard Time");
+        public Message(string username, string body, bool mine, TextSentiment sentiment, DateTimeOffset time)
+        {
+            Username = username;
+            Body = body;
+            Mine = mine;
+            DateTime = $"{TimeZoneInfo.ConvertTimeFromUtc(time.DateTime, zone):dd.MM.yyyy HH:mm.ss}";
+            Sentiment = sentiment.ToString();
+            switch (sentiment)
+            {
+                case TextSentiment.Positive:
+                    Color = CardColor.Success;
+                    break;
+                case TextSentiment.Negative:
+                    Color = CardColor.Danger;
+                    break;
+                case TextSentiment.Neutral:
+                    Color = CardColor.Secondary;
+                    break;
+                case TextSentiment.Mixed:
+                    Color = CardColor.Warning;
+                    break;
+            }
+        }
+
+        public string Username { get; set; }
+        public string? RecieverUsername { get; set; }
+        public string Body { get; set; }
+        public bool Mine { get; set; }
+        public string Sentiment { get; set; }
+        public string DateTime { get; set; }
+        public bool IsNotice => Username == "";
+        public CardColor Color { get; set; }
+        public string CSS => Mine ? "sent" : "received";
+    }
+}
